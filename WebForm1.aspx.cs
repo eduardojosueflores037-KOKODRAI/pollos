@@ -2,7 +2,6 @@
 using System.Collections.Generic;
 using System.Configuration;
 using System.Data.SqlClient;
-using System.Web;
 using System.Web.UI;
 using System.Web.UI.WebControls;
 
@@ -143,55 +142,14 @@ namespace WebApplication1
             decimal costoEntrega = (ddlTipoEntrega.SelectedValue == "Domicilio") ? 35.00m : 0.00m;
             decimal totalGeneral = subtotal + impuesto + costoEntrega;
 
-            try
-            {
-                using (SqlConnection conexion = new SqlConnection(cadenaConexion))
-                {
-                    conexion.Open();
+            // GUARDAMOS TEMPORALMENTE LOS DETALLES EN SESIÓN PARA NO GUARDAR AÚN EN BASE DE DATOS
+            Session["DetallesPedidoTemporal"] = listaDetalles;
+            Session["SubtotalPedido"] = subtotal;
+            Session["ImpuestoPedido"] = impuesto;
+            Session["CostoEntregaPedido"] = costoEntrega;
+            Session["TotalPedido"] = totalGeneral;
 
-                    string queryPedido = @"INSERT INTO Pedidos (ClienteNombre, Telefono, Direccion, TipoEntrega, Subtotal, Impuesto, CostoEntrega, Total) 
-                                           OUTPUT INSERTED.PedidoID 
-                                           VALUES (@ClienteNombre, @Telefono, @Direccion, @TipoEntrega, @Subtotal, @Impuesto, @CostoEntrega, @Total)";
-
-                    int nuevoPedidoID = 0;
-                    using (SqlCommand cmdPedido = new SqlCommand(queryPedido, conexion))
-                    {
-                        cmdPedido.Parameters.AddWithValue("@ClienteNombre", txtNombre.Text);
-                        cmdPedido.Parameters.AddWithValue("@Telefono", txtTelefono.Text);
-                        cmdPedido.Parameters.AddWithValue("@Direccion", txtDireccion.Text);
-                        cmdPedido.Parameters.AddWithValue("@TipoEntrega", ddlTipoEntrega.SelectedItem.Text);
-                        cmdPedido.Parameters.AddWithValue("@Subtotal", subtotal);
-                        cmdPedido.Parameters.AddWithValue("@Impuesto", impuesto);
-                        cmdPedido.Parameters.AddWithValue("@CostoEntrega", costoEntrega);
-                        cmdPedido.Parameters.AddWithValue("@Total", totalGeneral);
-
-                        nuevoPedidoID = (int)cmdPedido.ExecuteScalar();
-                    }
-
-                    foreach (var detalle in listaDetalles)
-                    {
-                        string queryDetalle = @"INSERT INTO DetallePedidos (PedidoID, ProductoNombre, Cantidad, PrecioUnitario, TotalItem) 
-                                               VALUES (@PedidoID, @ProductoNombre, @Cantidad, @PrecioUnitario, @TotalItem)";
-
-                        using (SqlCommand cmdDetalle = new SqlCommand(queryDetalle, conexion))
-                        {
-                            cmdDetalle.Parameters.AddWithValue("@PedidoID", nuevoPedidoID);
-                            cmdDetalle.Parameters.AddWithValue("@ProductoNombre", detalle.Item1);
-                            cmdDetalle.Parameters.AddWithValue("@Cantidad", detalle.Item2);
-                            cmdDetalle.Parameters.AddWithValue("@PrecioUnitario", detalle.Item3);
-                            cmdDetalle.Parameters.AddWithValue("@TotalItem", detalle.Item4);
-
-                            cmdDetalle.ExecuteNonQuery();
-                        }
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                ScriptManager.RegisterStartupScript(this, GetType(), "alertDBError", $"alert('Error al guardar en la base de datos: {ex.Message.Replace("'", "")}');", true);
-                return;
-            }
-
+            // MOSTRAR DATOS EN PANTALLA
             lblFacturaNombre.Text = txtNombre.Text;
             lblFacturaTelefono.Text = txtTelefono.Text;
             lblFacturaDireccion.Text = txtDireccion.Text;
@@ -216,17 +174,90 @@ namespace WebApplication1
 
         protected void btnEliminar_Click(object sender, EventArgs e)
         {
+            // AL ELIMINAR SIMPLEMENTE LIMPIAMOS LA SESIÓN Y LOS CAMPOS (NADA SE GUARDÓ EN LA BASE DE DATOS)
+            Session.Remove("DetallesPedidoTemporal");
+            Session.Remove("SubtotalPedido");
+            Session.Remove("ImpuestoPedido");
+            Session.Remove("CostoEntregaPedido");
+            Session.Remove("TotalPedido");
+
             foreach (Control c in this.Controls)
             {
                 LimpiarControlesRecursivo(c);
             }
             pnlFactura.Visible = false;
-            ScriptManager.RegisterStartupScript(this, GetType(), "alertEliminado", "alert('El pedido ha sido cancelado y limpiado.');", true);
+            ScriptManager.RegisterStartupScript(this, GetType(), "alertEliminado", "alert('El pedido ha sido cancelado y no fue guardado.');", true);
         }
 
         protected void btnEnvioEntregado_Click(object sender, EventArgs e)
         {
-            ScriptManager.RegisterStartupScript(this, GetType(), "alertCompletado", "alert('¡Excelente! El pedido ha sido marcado como entregado.');", true);
+            // AQUÍ ES DONDE REALMENTE CONFIRMAMOS Y GUARDAMOS EL PEDIDO EN LA BASE DE DATOS
+            if (Session["DetallesPedidoTemporal"] != null)
+            {
+                var listaDetalles = (List<Tuple<string, int, decimal, decimal>>)Session["DetallesPedidoTemporal"];
+                decimal subtotal = (decimal)Session["SubtotalPedido"];
+                decimal impuesto = (decimal)Session["ImpuestoPedido"];
+                decimal costoEntrega = (decimal)Session["CostoEntregaPedido"];
+                decimal totalGeneral = (decimal)Session["TotalPedido"];
+
+                try
+                {
+                    using (SqlConnection conexion = new SqlConnection(cadenaConexion))
+                    {
+                        conexion.Open();
+
+                        string queryPedido = @"INSERT INTO Pedidos (ClienteNombre, Telefono, Direccion, TipoEntrega, Subtotal, Impuesto, CostoEntrega, Total) 
+                                               OUTPUT INSERTED.PedidoID 
+                                               VALUES (@ClienteNombre, @Telefono, @Direccion, @TipoEntrega, @Subtotal, @Impuesto, @CostoEntrega, @Total)";
+
+                        int nuevoPedidoID = 0;
+                        using (SqlCommand cmdPedido = new SqlCommand(queryPedido, conexion))
+                        {
+                            cmdPedido.Parameters.AddWithValue("@ClienteNombre", txtNombre.Text);
+                            cmdPedido.Parameters.AddWithValue("@Telefono", txtTelefono.Text);
+                            cmdPedido.Parameters.AddWithValue("@Direccion", txtDireccion.Text);
+                            cmdPedido.Parameters.AddWithValue("@TipoEntrega", ddlTipoEntrega.SelectedItem.Text);
+                            cmdPedido.Parameters.AddWithValue("@Subtotal", subtotal);
+                            cmdPedido.Parameters.AddWithValue("@Impuesto", impuesto);
+                            cmdPedido.Parameters.AddWithValue("@CostoEntrega", costoEntrega);
+                            cmdPedido.Parameters.AddWithValue("@Total", totalGeneral);
+
+                            nuevoPedidoID = (int)cmdPedido.ExecuteScalar();
+                        }
+
+                        foreach (var detalle in listaDetalles)
+                        {
+                            string queryDetalle = @"INSERT INTO DetallePedidos (PedidoID, ProductoNombre, Cantidad, PrecioUnitario, TotalItem) 
+                                                   VALUES (@PedidoID, @ProductoNombre, @Cantidad, @PrecioUnitario, @TotalItem)";
+
+                            using (SqlCommand cmdDetalle = new SqlCommand(queryDetalle, conexion))
+                            {
+                                cmdDetalle.Parameters.AddWithValue("@PedidoID", nuevoPedidoID);
+                                cmdDetalle.Parameters.AddWithValue("@ProductoNombre", detalle.Item1);
+                                cmdDetalle.Parameters.AddWithValue("@Cantidad", detalle.Item2);
+                                cmdDetalle.Parameters.AddWithValue("@PrecioUnitario", detalle.Item3);
+                                cmdDetalle.Parameters.AddWithValue("@TotalItem", detalle.Item4);
+
+                                cmdDetalle.ExecuteNonQuery();
+                            }
+                        }
+                    }
+
+                    // Limpiar variables de sesión tras completar la transacción
+                    Session.Remove("DetallesPedidoTemporal");
+                    ScriptManager.RegisterStartupScript(this, GetType(), "alertCompletado", "alert('¡Excelente! Tu pedido ha sido confirmado y registrado exitosamente.');", true);
+                }
+                catch (Exception ex)
+                {
+                    ScriptManager.RegisterStartupScript(this, GetType(), "alertDBError", $"alert('Error al procesar el pedido: {ex.Message.Replace("'", "")}');", true);
+                    return;
+                }
+            }
+
+            foreach (Control c in this.Controls)
+            {
+                LimpiarControlesRecursivo(c);
+            }
             pnlFactura.Visible = false;
         }
 
